@@ -5,6 +5,8 @@ import os
 from azure.ai.inference import ChatCompletionsClient
 from azure.ai.inference.models import SystemMessage, UserMessage
 from azure.core.credentials import AzureKeyCredential
+from langchain_qdrant import QdrantVectorStore
+
 from dotenv import load_dotenv
 
 
@@ -33,6 +35,14 @@ split_docs = text_splitter.split_documents(documents=docs)
 #     # of the embeddings you want returned.
 #     # dimensions=1024
 # )
+
+vector_store = QdrantVectorStore.from_documents(
+    documents=split_docs,
+    # check
+)
+
+
+
 
 endpoint = "https://models.github.ai/inference"
 # model = "openai/gpt-5-mini"
