@@ -1,13 +1,9 @@
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
 import os
-from azure.ai.inference import ChatCompletionsClient
-from azure.ai.inference.models import SystemMessage, UserMessage
-from azure.core.credentials import AzureKeyCredential
 from langchain_qdrant import QdrantVectorStore
-from azure.ai.inference import EmbeddingsClient
-
+from langchain_huggingface import HuggingFaceEmbeddings
+from google import genai
 from dotenv import load_dotenv
 
 
@@ -28,54 +24,70 @@ text_splitter = RecursiveCharacterTextSplitter(
 
 split_docs = text_splitter.split_documents(documents=docs)
 
-
-# endpoint_embeddigs = "https://models.github.ai/inference"
-endpoint = "https://models.github.ai/inference"
-model_name_embeddings = "openai/text-embedding-3-large"
-api_key_embeddings = os.environ["api_key"]
-
-# Vector Embeddings
-# embedding_model = OpenAIEmbeddings(
-#     model=model_name_embeddings,
-#     api_key=api_key_embeddings
-#     # With the `text-embedding-3` class
-#     # of models, you can specify the size
-#     # of the embeddings you want returned.
-#     # dimensions=1024
-# )
-
-client = EmbeddingsClient(
-    endpoint=endpoint,
-    credential=AzureKeyCredential(api_key_embeddings)
+# Vector Embeddings using HuggingFace (runs locally, no API key needed)
+embedding_model = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
 vector_store = QdrantVectorStore.from_documents(
     documents=split_docs,
     url = "http://localhost:6333",
     collection_name ="rag_01",
-    embedding=client
+    embedding=embedding_model
 )
 
 print("Indexing of document done...")
 
+# Initialize Gemini client for chat
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# model = "openai/gpt-5-mini"
-model = "gpt-5-mini"
-token = os.environ["GITHUB_TOKEN"]
+# RAG Question-Answer Loop
+print("\n" + "="*50)
+print("RAG System Ready! Ask questions about the PDF.")
+print("Type 'stop' to exit.")
+print("="*50 + "\n")
 
-client = ChatCompletionsClient(
-    endpoint=endpoint,
-    credential=AzureKeyCredential(token),
-)
+while True:
+    question = input("Your question: ").strip()
+    
+    if question.lower() == "stop":
+        print("Exiting... Goodbye!")
+        break
+    
+    if not question:
+        print("Please enter a question.\n")
+        continue
+    
+    # Retrieve relevant documents from vector store
+    retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+    relevant_docs = retriever.invoke(question)
+    
+    # Build context from retrieved documents
+    context = "\n\n".join([doc.page_content for doc in relevant_docs])
+    
+    # Create prompt with context
+    prompt = f"""Based on the following context, answer the question.
 
-response = client.complete(
-    messages=[
-        SystemMessage("You are a helpful assistant."),
-        UserMessage("What is the capital of France?"),
-    ],
-    model=model
-)
+Context:
+{context}
 
-print(response.choices[0].message.content)
+Question: {question}
+
+Answer:"""
+    
+    # Get response from Gemini
+    interaction = client.interactions.create(
+        model="gemini-3-flash-preview",
+        input=prompt
+    )
+    
+    answer = interaction.outputs[-1].text
+    
+    print(f"\nAnswer: {answer}\n")
+    print("Sources:")
+    for idx, doc in enumerate(relevant_docs, 1):
+        page_no = doc.metadata.get('page', 'N/A')
+        print(f"  - Chunk {idx}, Page {page_no}")
+    print("\n" + "-"*50 + "\n")
 
 
